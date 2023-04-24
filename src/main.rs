@@ -10,8 +10,9 @@ fn main() -> Result<()> {
 
     let (shutdown_tx, shutdown_rx) = system::shutdown();
     let (commands_tx, commands_rx) = audio::commands();
-    audio::run(commands_rx, shutdown_rx);
-    graphics::run(commands_tx, shutdown_tx)?;
+
+    audio::run(commands_rx, shutdown_rx.clone())?;
+    graphics::run(commands_tx, shutdown_tx, shutdown_rx)?;
 
     Ok(())
 }

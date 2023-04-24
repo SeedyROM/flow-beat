@@ -1,5 +1,8 @@
 use color_eyre::Result;
-use crossbeam::channel::{Receiver, Sender};
+use multiqueue::{MPMCReceiver, MPMCSender};
+
+pub type ShutdownSender = MPMCSender<()>;
+pub type ShutdownReceiver = MPMCReceiver<()>;
 
 pub fn setup() -> Result<()> {
     setup_backtracing()?;
@@ -35,13 +38,19 @@ fn setup_logging() -> Result<()> {
     Ok(())
 }
 
-pub fn shutdown() -> (Sender<()>, Receiver<()>) {
-    let (shutdown_tx, shutdown_rx) = crossbeam::channel::bounded::<()>(1);
+pub fn shutdown() -> (ShutdownSender, ShutdownReceiver) {
+    let (shutdown_tx, shutdown_rx) = multiqueue::mpmc_queue::<()>(1);
 
     ctrlc::set_handler({
         let shutdown_tx = shutdown_tx.clone();
         move || {
-            shutdown_tx.send(()).unwrap();
+            println!("");
+            // Send two messages for each both the audio and graphics threads
+            for _ in 0..2 {
+                shutdown_tx
+                    .try_send(())
+                    .expect("Failed to send shutdown signal");
+            }
         }
     })
     .unwrap();

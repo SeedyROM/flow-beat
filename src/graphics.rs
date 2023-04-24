@@ -8,21 +8,27 @@ use ggez::{
     graphics::{Canvas, Color, FontData, Text},
     Context, ContextBuilder, GameResult,
 };
-use tracing::warn;
+use tracing::{info, warn};
 
-use crate::{audio::AudioCommand, parameter::Parameter};
+use crate::{
+    audio::AudioCommand,
+    parameter::Parameter,
+    system::{ShutdownReceiver, ShutdownSender},
+};
 
 struct Window {
     amplitude: Parameter<f32>,
     commands_tx: Sender<AudioCommand>,
-    shutdown_tx: Sender<()>,
+    shutdown_tx: ShutdownSender,
+    shutdown_rx: ShutdownReceiver,
 }
 
 impl Window {
     fn new(
         ctx: &mut Context,
         commands_tx: Sender<AudioCommand>,
-        shutdown_tx: Sender<()>,
+        shutdown_tx: ShutdownSender,
+        shutdown_rx: ShutdownReceiver,
     ) -> GameResult<Self> {
         let amplitude = Parameter::new(0.0);
 
@@ -30,6 +36,7 @@ impl Window {
             amplitude,
             commands_tx,
             shutdown_tx,
+            shutdown_rx,
         };
 
         window.load_assets(ctx)?;
@@ -57,15 +64,20 @@ impl EventHandler for Window {
     fn update(&mut self, ctx: &mut Context) -> GameResult {
         if ctx.quit_requested {
             warn!("Received quit request");
-            self.shutdown_tx.send(()).unwrap();
+            self.shutdown_tx.try_send(()).unwrap();
+        }
+
+        if let Ok(_) = self.shutdown_rx.try_recv() {
+            info!("Shutting down window...");
+            ctx.request_quit();
         }
 
         self.amplitude.set(ctx.mouse.position().x / 4000.0);
 
         if self.amplitude.has_changed() {
-            self.commands_tx
-                .send(AudioCommand::SetAmplitude(self.amplitude.get()))
-                .unwrap();
+            let _ = self
+                .commands_tx
+                .send(AudioCommand::SetAmplitude(self.amplitude.get()));
         }
 
         Ok(())
@@ -87,9 +99,13 @@ impl EventHandler for Window {
     }
 }
 
-pub fn run(commands_tx: Sender<AudioCommand>, shutdown_tx: Sender<()>) -> GameResult {
+pub fn run(
+    commands_tx: Sender<AudioCommand>,
+    shutdown_tx: ShutdownSender,
+    shutdown_rx: ShutdownReceiver,
+) -> GameResult {
     let (mut ctx, event_loop) = build_context()?;
-    let window = Window::new(&mut ctx, commands_tx, shutdown_tx)?;
+    let window = Window::new(&mut ctx, commands_tx, shutdown_tx, shutdown_rx)?;
 
     ggez::event::run(ctx, event_loop, window)
 }

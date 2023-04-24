@@ -8,14 +8,16 @@ use cpal::{
 use crossbeam::channel::{Receiver, Sender};
 use tracing::{info, warn};
 
+use crate::system::ShutdownReceiver;
+
 pub struct Audio {
     commands_rx: Receiver<AudioCommand>,
-    shutdown_rx: Receiver<()>,
+    shutdown_rx: ShutdownReceiver,
     device: cpal::Device,
 }
 
 impl Audio {
-    pub fn new(commands_rx: Receiver<AudioCommand>, shutdown_rx: Receiver<()>) -> Result<Self> {
+    pub fn new(commands_rx: Receiver<AudioCommand>, shutdown_rx: ShutdownReceiver) -> Result<Self> {
         let host = cpal::default_host();
 
         let device = host
@@ -51,6 +53,8 @@ impl Audio {
             .recv()
             .expect("Failed to receive shutdown signal");
 
+        info!("Stream stopping...");
+
         Ok(())
     }
 
@@ -65,6 +69,7 @@ impl Audio {
     {
         let commands_rx = self.commands_rx.clone();
         let mut amplitude = 0.0;
+        let mut disconnected = false;
         let stream = self.device.build_output_stream(
             &config,
             move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
@@ -77,7 +82,10 @@ impl Audio {
                     Err(err) => match err {
                         crossbeam::channel::TryRecvError::Empty => {}
                         crossbeam::channel::TryRecvError::Disconnected => {
-                            warn!("Audio command channel disconnected");
+                            if !disconnected {
+                                warn!("Audio command channel disconnected");
+                                disconnected = true;
+                            }
                         }
                     },
                 }
@@ -101,12 +109,14 @@ pub enum AudioCommand {
     SetAmplitude(f32),
 }
 
-pub fn run(commands_rx: Receiver<AudioCommand>, shutdown_rx: Receiver<()>) {
+pub fn run(commands_rx: Receiver<AudioCommand>, shutdown_rx: ShutdownReceiver) -> Result<()> {
     let mut audio = Audio::new(commands_rx, shutdown_rx).expect("failed to create audio");
 
     thread::spawn(move || {
         audio.start().expect("failed to start audio");
     });
+
+    Ok(())
 }
 
 pub fn commands() -> (Sender<AudioCommand>, Receiver<AudioCommand>) {
